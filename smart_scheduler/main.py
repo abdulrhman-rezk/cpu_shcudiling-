@@ -1,140 +1,106 @@
-import sys
-import time
-import os
-import itertools
-import matplotlib.pyplot as plt
+# smart cpu scheduler
+# compare the normal round robin (same quantum for all) with the ai round robin
+# the model decide every process cpu bound or io bound .. and give him the right quantum
+
 import numpy as np
+import matplotlib.pyplot as plt
 
-from processes import generate_simulation_processes
-from scheduler import traditional_round_robin, ai_round_robin
+from processes import generate_processes
+from scheduler import traditional_rr, ai_rr
 
-def show_loading_spinner(message, seconds):
-    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    end_time = time.time() + seconds
-    spinner = itertools.cycle(frames)
-    
-    while time.time() < end_time:
-        sys.stdout.write(f"\r  {next(spinner)}  {message}  ")
-        sys.stdout.flush()
-        time.sleep(0.08)
-    sys.stdout.write(f"\r  ✔  {message}  Done!   \n")
 
-def show_charts(processes, rr_results, ai_results, avg_rr, avg_ai):
-    plt.style.use('ggplot')
-    
-    # 1. رسمة لمتوسط وقت الانتظار
-    plt.figure(figsize=(6, 4))
-    bars = plt.bar(["Standard RR", "AI Scheduler"], [avg_rr, avg_ai], color=['#e24a33', '#348abd'])
-    plt.title("Average Waiting Time Comparison")
-    plt.ylabel("Waiting Time (ms)")
-    
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2.0, yval, f"{yval:.1f} ms", va='bottom', ha='center', fontweight='bold')
-        
+# help function
+def read_number(msg) :
+    try :
+        return int(input(msg))
+    except ValueError :
+        return -1
+
+
+def show_processes(processes) :
+    print('what the model decided')
+    print('-' * 70)
+    print('PID\tBurst\tIO\tMemory\tType\t\tQuantum')
+    print('-' * 70)
+    for p in processes :
+        ptype = 'io bound' if p.process_type == 1 else 'cpu bound'
+        print(f'{p.pid}\t{p.burst_time}ms\t{p.io_frequency}\t{p.memory_usage}MB\t{ptype}\t\t{p.quantum}ms')
+    print('-' * 70)
+
+
+def show_results(processes) :
+    print('scheduling comparison')
+    print('-' * 70)
+    print('PID\tBurst\tstd RR WT\tAI RR WT\tsaved')
+    print('-' * 70)
+    for p in processes :
+        saved = p.waiting_std - p.waiting_ai
+        print(f'{p.pid}\t{p.burst_time}ms\t{p.waiting_std}ms\t\t{p.waiting_ai}ms\t\t{saved}ms')
+    print('-' * 70)
+
+
+def show_charts(processes) :
+    avg_std = sum(p.waiting_std for p in processes) / len(processes)
+    avg_ai = sum(p.waiting_ai for p in processes) / len(processes)
+
+    # chart 1 .. average waiting time
+    plt.bar(['Standard RR', 'AI RR'], [avg_std, avg_ai], color=['red', 'green'])
+    plt.title('Average Waiting Time')
+    plt.ylabel('ms')
     plt.show()
 
-    # 2. رسمة لأول 10 عمليات عشان نقارن بينهم ببساطة
-    num_to_show = min(10, len(processes))
-    pids = [p["pid"] for p in processes[:num_to_show]]
-    rr_vals = [r["waiting_time"] for r in rr_results[:num_to_show]]
-    ai_vals = [r["waiting_time"] for r in ai_results[:num_to_show]]
-    
+    # chart 2 .. first 10 processes
+    first10 = processes[:10]
+    pids = [p.pid for p in first10]
     x = np.arange(len(pids))
     width = 0.35
 
-    plt.figure(figsize=(10, 5))
-    bars1 = plt.bar(x - width/2, rr_vals, width, label='Standard RR', color='#e24a33')
-    bars2 = plt.bar(x + width/2, ai_vals, width, label='AI Scheduler', color='#348abd')
+    plt.bar(x - width/2, [p.waiting_std for p in first10], width, label='Standard RR')
+    plt.bar(x + width/2, [p.waiting_ai for p in first10], width, label='AI RR')
     plt.xticks(x, pids)
-    plt.title("Per-Process Waiting Time (First 10 processes)")
-    plt.ylabel("Waiting Time (ms)")
+    plt.title('Waiting Time (first 10 processes)')
+    plt.ylabel('ms')
     plt.legend()
-    
-    # وضع الأرقام فوق الأعمدة
-    for bar in bars1:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2.0, yval, f"{int(yval)}", va='bottom', ha='center', fontsize=8)
-    for bar in bars2:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2.0, yval, f"{int(yval)}", va='bottom', ha='center', fontsize=8)
-
     plt.show()
 
-def main():
-    print("AI-Driven CPU Scheduling Simulator")
-    print("----------------------------------\n")
 
-    while True:
-        try:
-            n = int(input("Enter the number of processes to simulate: "))
-            if n > 0:
-                break
-            print("Please enter a positive number.\n")
-        except ValueError:
-            print("Invalid input. Please enter an integer.\n")
+# heart of app
+def main() :
+    print('smart cpu scheduler')
+    print('-' * 30)
 
-    print()
-    show_loading_spinner("Generating processes...", 1.5)
-    processes = generate_simulation_processes(n)
+    n = 0
+    while n <= 0 :
+        n = read_number('how many processes to simulate : ')
+        if n <= 0 :
+            print('enter a positive number!')
 
-    ai_results = ai_round_robin(processes)
-    
-    print("\nAI Process Analysis")
-    print("-------------------")
-    for p in processes:
-        pid = p["pid"]
+    processes = generate_processes(n)
 
-        r = next(item for item in ai_results if item["pid"] == pid)
-        
-        io_level = "Low" if p["io_frequency"] <= 5 else ("High" if p["io_frequency"] >= 10 else "Med")
-        ptype = "CPU-BOUND" if r["predicted_type"] == 0 else "I/O-BOUND"
-        
-        print(f"[{pid}]\tBurst: {p['burst_time']}ms \tIO: {io_level} \t-> {ptype} \t-> Quantum: {r['quantum']}ms")
-        time.sleep(0.05)
+    # the model read every process and choose the quantum
+    ai_rr(processes)
+    show_processes(processes)
+
+    # run the two schedulers and compare
+    traditional_rr(processes)
 
     print()
-    show_loading_spinner("Running Scheduling Algorithms...", 2)
-    rr_results = traditional_round_robin(processes)
+    show_results(processes)
 
-    print("\nScheduling Comparison")
-    print("---------------------")
+    avg_std = sum(p.waiting_std for p in processes) / len(processes)
+    avg_ai = sum(p.waiting_ai for p in processes) / len(processes)
+    print(f'standard RR avg waiting : {avg_std:.1f} ms')
+    print(f'ai RR avg waiting       : {avg_ai:.1f} ms')
 
-    print("PID\tBurst\tStd RR WT\tAI Quantum\tAI WT\tSaved")
-    print("-" * 75)
+    if avg_ai < avg_std :
+        print(f'\nthe ai scheduler saved {100 - (avg_ai / avg_std * 100):.1f} % of the waiting time!')
+    else :
+        print('\nthis time the standard RR was better .. try again')
 
-    rr_by_pid = {r["pid"]: r["waiting_time"] for r in rr_results}
-    ai_by_pid = {r["pid"]: r for r in ai_results}
+    input('\npress enter to see the charts...')
+    show_charts(processes)
+    print('bye!')
 
-    for p in processes:
-        pid = p["pid"]
-        burst = p["burst_time"]
-        rr_wt = rr_by_pid[pid]
-        ai_wt = ai_by_pid[pid]["waiting_time"]
-        ai_q = ai_by_pid[pid]["quantum"]
-        saved = rr_wt - ai_wt
-        
-        print(f"{pid}\t{burst}ms\t{rr_wt}ms\t\t{ai_q}ms\t\t{ai_wt}ms\t{saved}ms")
-        time.sleep(0.05)
 
-    print("-" * 75)
-
-    avg_rr = sum(r["waiting_time"] for r in rr_results) / len(rr_results)
-    avg_ai = sum(r["waiting_time"] for r in ai_results) / len(ai_results)
-    pct = ((avg_rr - avg_ai) / avg_rr * 100) if avg_rr > 0 else 0.0
-
-    print("\nSummary")
-    print("-------")
-    print(f"Standard RR  Avg Waiting Time : {avg_rr:.1f} ms")
-    print(f"AI Scheduler Avg Waiting Time : {avg_ai:.1f} ms")
-    
-    if pct >= 0:
-        print(f"\nAI Scheduler is {pct:.1f}% faster on average.\n")
-    else:
-        print(f"\nAI Scheduler is {abs(pct):.1f}% slower on average.\n")
-
-    input("Press Enter to view the charts...")
-    show_charts(processes, rr_results, ai_results, avg_rr, avg_ai)
-
-if __name__ == "__main__":
-    main()
+# end point
+main()
